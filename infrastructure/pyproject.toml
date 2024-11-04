@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "summarizer-pulumi"
+version = "0.1.0"
+description = ""
+authors = ["Daniel Albarral Nunez <daniel@albarralnunez.me>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pulumi = "^3.137.0"
+pulumi-digitalocean = "^4.34.0"
+pulumi-kubernetes = "^4.18.2"
+pulumi-docker-build = "^0.0.7"
+pulumi-synced-folder = "^0.11.1"
+pulumi-command = "^1.0.1"
+pulumi-cloudflare = "^5.42.0"
+black = "^24.10.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

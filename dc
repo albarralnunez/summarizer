@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Compatibility with Apple Silicon
+if [[ $(uname -m) == 'arm64' ]]; then
+  export PLATFORM="linux/aarch64"
+fi
+
+if docker compose version &> /dev/null; then
+  DC="docker compose"
+  $DC version
+else
+  DC="docker-compose"
+  $DC --version
+fi
+
+$DC $@

@@ -1,0 +1,3 @@
+name: summarizer-app
+runtime: python
+description: Summarizer app infrastructure using DigitalOcean 

@@ -1,0 +1,12 @@
+config:
+  cloudflare:zoneId:
+    secure: AAABAG7df8Ch2c3s5tcSU4wxTPustML405lztah1dtmPktlzWVjBL3wmu11z7mhgg5Cm27pizMXdUDB/t1y4hA==
+  cloudflare:apiToken:
+    secure: AAABALcdIP3ZFLNVNEzCUcLCIDUefi8hll65ekTAyq8U1gKBTcAum/e1I69ut7kAWZgVNo21QkVjtKxJzPF0RttfV1yQpu+f
+  digitalocean:token:
+    secure: AAABAF2h3uut93Ig9p7AXRkDKyJMuiAj9QfKDBmYeqxNOsQsWa1aQiohXH+VDnZGcM51mrfL3psFd7gvNq+ntcgoH0Ce/EFu0PU87eL8FhtcjeEpw4PNgKJHl/XM++aHpUyEax1SOA==
+  digitalocean:spacesSecretAccessKey:
+    secure: AAABAMmrfPsnpK/2WDucPrjG3pcJWMha2tup+qkGCXGPoqtiFcAKTIuB43DbQmMj27x96gX/RVq1t2uBtgeI2w+U7sYmJcbo502J
+  digitalocean:spacesAccessKeyId:
+    secure: AAABAEud3fsLOCUpSTieDR8IHASjDpaYzXfItyusq0pi5A9UICxYlD/kiFT7QeK0WXOkaA==
+  domain: summarizer.albarralnunez.me

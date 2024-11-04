@@ -1,0 +1,36 @@
+#!/bin/bash
+
+set -e  # Exit on error
+
+# Get kubeconfig content from Pulumi output and ensure it's properly formatted
+KUBECONFIG_JSON=$(pulumi stack output kubeconfig --show-secrets)
+
+# Create a temporary file for kubeconfig
+TEMP_KUBECONFIG=$(mktemp)
+
+# Extract the raw_config from the JSON array and write to the kubeconfig file
+echo "$KUBECONFIG_JSON" | jq -r '.[0].raw_config' > "$TEMP_KUBECONFIG"
+
+# Verify the kubeconfig file exists and has content
+if [ ! -s "$TEMP_KUBECONFIG" ]; then
+    echo "Error: Failed to create valid kubeconfig file"
+    rm "$TEMP_KUBECONFIG"
+    exit 1
+fi
+
+# Validate the kubeconfig structure
+if ! kubectl --kubeconfig="$TEMP_KUBECONFIG" config view > /dev/null 2>&1; then
+    echo "Error: Invalid kubeconfig file"
+    cat "$TEMP_KUBECONFIG"
+    rm "$TEMP_KUBECONFIG"
+    exit 1
+fi
+
+# Export KUBECONFIG for kubectl to use
+export KUBECONFIG="$TEMP_KUBECONFIG"
+
+# Run k9s with the configured kubeconfig
+k9s
+
+# Clean up the temporary file
+rm "$TEMP_KUBECONFIG"

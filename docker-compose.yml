@@ -1,0 +1,60 @@
+services:
+  app:
+    build:
+      context: ./server
+      dockerfile: python.Dockerfile
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./server/src:/app/src
+    environment:
+      - DASK_SCHEDULER_HOST=scheduler
+      - DASK_SCHEDULER_PORT=8786
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=DEBUG
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8888 --reload
+
+  scheduler:
+    build:
+      context: ./server
+      dockerfile: python.Dockerfile
+    ports:
+      - "8786:8786"  # Dask scheduler
+      - "8787:8787"  # Dask dashboard
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./server/src:/app/src
+    command: "dask scheduler --host 0.0.0.0 --port 8786 --dashboard-address 0.0.0.0:8787 --protocol tcp:// --no-show"
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: python.Dockerfile
+    environment:
+      - DASK_SCHEDULER_HOST=scheduler
+      - DASK_SCHEDULER_PORT=8786
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=DEBUG
+    command: "dask worker tcp://scheduler:8786 --nthreads 2 --memory-limit 4GB --no-dashboard"
+    volumes:
+      - ./server/src:/app/src
+    deploy:
+      replicas: 4
+
+  python-test:
+    build:
+      context: ./server
+      dockerfile: python.Dockerfile
+    volumes:
+      - ./server/src:/app/src
+    command: >
+      pytest 
+      -n auto 
+      --dist=loadfile 
+      --max-worker-restart=0 
+      /app/src 
+    environment:
+      - LOG_LEVEL=DEBUG
+      - PYTHONUNBUFFERED=1
