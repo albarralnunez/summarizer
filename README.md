@@ -118,16 +118,3 @@ The TF-IDF implementation can be found in the [`summarize_text`](server/main.py#
 - Language-independent approach
 
 For more details, see the [`server/main.py`](server/main.py) file.
-
-# Notes:
-
-I initially created two repositories but had to remove the first one due to an error—I accidentally added the frontend as a submodule and only noticed it later. To resolve this quickly, I re-uploaded the repository.
-
-The initial version featured a custom algorithm. After a short break for personal matters, I created a second version using Sumy.
-
-During cleanup, I kept the client and server simple, as adding complex patterns or excessive splitting didn’t seem necessary. The Python components are likely the most thoroughly documented.
-
-The next day, I had some new ideas I wanted to implement for fun, including significant performance optimizations, client design enhancements, and improvements in code quality and developer experience.
-
-
-For the first commit it took ~45m, the first optimization +~15m. From there I just started doing some stuff now and then when I had time becuse I liked the challangeThe initial commit took about 45 minutes, with the first optimization adding around 15 more. After that, I continued making improvements here and there when I had time, simply because I enjoyed the challenge.
