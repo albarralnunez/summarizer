@@ -6,7 +6,7 @@ from ebooklib import epub
 from bs4 import BeautifulSoup
 import tempfile
 import os
-from src.utils.text_processing import yield_sentences
+from src.utils.text_processing import yield_sentences, split_into_sentences
 import logging
 
 logger = logging.getLogger(__name__)
@@ -37,21 +37,29 @@ async def process_input(
             buffer = ""
 
             while True:
+                logger.info(f"Reading chunk of size {chunk_size}")
                 chunk = await file.read(chunk_size)
                 if not chunk:
                     break
-
-                buffer += chunk.decode("utf-8")
-                sentences = re.split(r"(?<=[.!?])\s+", buffer)
-
-                for sentence in sentences[:-1]:
-                    if sentence.strip():
+                
+                current_text = buffer + chunk.decode("utf-8")
+                sentences = split_into_sentences(current_text)
+                
+                # If we have more chunks coming, keep the last sentence in buffer
+                if chunk:
+                    if sentences:
+                        # Yield all sentences except the last one
+                        for sentence in sentences[:-1]:
+                            yield sentence
+                        # Keep the last sentence in buffer for next iteration
+                        buffer = sentences[-1]
+                    else:
+                        # If no complete sentences found, add to buffer
+                        buffer = current_text
+                else:
+                    # On last chunk, yield all remaining sentences
+                    for sentence in sentences:
                         yield sentence
-
-                buffer = sentences[-1]
-
-            if buffer.strip():
-                yield buffer.strip()
         elif file_extension == "epub":
             content = await file.read()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as temp_file:

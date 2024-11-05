@@ -42,7 +42,7 @@ def split_into_sentences(text: Union[str, List[str]]) -> List[str]:
         for s in final_sentences
         if (
             s
-            and len(s) >= 10  # Minimum length
+            and len(s) >= 10  # Minimum length - TODO:Make this configurable
             and any(c.isalpha() for c in s)  # Contains letters
             and s.strip(".-_,;:!? ").strip()  # Not just punctuation
         )

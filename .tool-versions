@@ -1,4 +1,4 @@
-node 18
+node 20
 python 3.11
 doctl 1.117.0
 pulumi 3.137.0
