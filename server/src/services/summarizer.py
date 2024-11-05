@@ -69,13 +69,13 @@ def calculate_tfidf_scores(word_count_matrix) -> np.ndarray:
 
 
 
-async def process_sentences_and_build_vocabulary(
+async def build_vocabulary(
     sentence_iterator: AsyncIterator[str],
     num_sentences: int,
     early_termination_factor: float
-) -> Tuple[Dict[str, int], List[Tuple[str, List[str]]], List[csr_matrix]]:
+) -> Tuple[Dict[str, int], List[Tuple[str, List[str]]]]:
     """
-    Process sentences from iterator, build vocabulary and create sentence vectors.
+    Build vocabulary from sentences and return word-to-index mapping and processed sentences.
     
     Args:
         sentence_iterator: Iterator yielding sentences
@@ -86,13 +86,10 @@ async def process_sentences_and_build_vocabulary(
         Tuple containing:
         - word_to_index: Dictionary mapping words to indices
         - sentences: List of (sentence, filtered_words) tuples
-        - sentence_vectors: List of sparse vectors representing sentences
     """
     word_to_index = {}
     sentences = []
-    sentence_vectors = []
 
-    # First pass: build complete vocabulary
     async for sentence in sentence_iterator:
         words = word_tokenize(sentence.lower())
         filtered_words = [
@@ -108,40 +105,57 @@ async def process_sentences_and_build_vocabulary(
         if len(sentences) >= max(num_sentences * 10, 200) * early_termination_factor:
             break
 
-    # Process sentences with complete vocabulary
+    return word_to_index, sentences
+
+async def vectorize_sentences(
+    word_to_index: Dict[str, int],
+    sentences: List[Tuple[str, List[str]]],
+    num_sentences: int
+) -> List[csr_matrix]:
+    """
+    Convert processed sentences into sparse vectors using the vocabulary.
+    
+    Args:
+        word_to_index: Dictionary mapping words to indices
+        sentences: List of (sentence, filtered_words) tuples
+        num_sentences: Number of sentences to extract
+        
+    Returns:
+        List of sparse vectors representing sentences
+    """
+    sentence_vectors = []
     batch_size = max(100, 2 * num_sentences)
+    
     for i in range(0, len(sentences), batch_size):
         batch = sentences[i : min(i + batch_size, len(sentences))]
         results = await process_sentences_batch(batch, word_to_index)
-
         sentence_vectors.extend([vector for _, vector in results])
 
-    return word_to_index, sentences, sentence_vectors
+    return sentence_vectors
 
 async def summarize_text(
     sentence_iterator: AsyncIterator[str],
     num_sentences: int,
     early_termination_factor: float,
 ) -> List[str]:
-    # Process sentences and build vocabulary
-    word_to_index, sentences, sentence_vectors = await process_sentences_and_build_vocabulary(
+    # Build vocabulary and process sentences
+    word_to_index, sentences = await build_vocabulary(
         sentence_iterator, num_sentences, early_termination_factor
     )
 
     if not sentences:
         raise ValueError("File is empty or contains no valid sentences")
 
-    # Create a matrix where each row represents a sentence and each column represents a word
-    word_count_matrix = vstack(sentence_vectors)
+    # Vectorize sentences
+    sentence_vectors = await vectorize_sentences(word_to_index, sentences, num_sentences)
     
-    # Calculate sentence scores using TF-IDF
+    # Create word count matrix and calculate TF-IDF scores
+    word_count_matrix = vstack(sentence_vectors)
     sentence_scores = calculate_tfidf_scores(word_count_matrix)
     
-    # Get the indices of sentences sorted by their scores, then take the last num_sentences entries
-    sorted_indices = np.argsort(sentence_scores)  # Sort all indices by score (ascending)
-    top_indices = sorted_indices[-num_sentences:]  # Take the last num_sentences indices (highest scores)
-    
-    # Sort the indices of the top sentences
+    # Get the indices of sentences sorted by their scores
+    sorted_indices = np.argsort(sentence_scores)
+    top_indices = sorted_indices[-num_sentences:]
     top_indices.sort()
 
     return [sentences[i][0] for i in top_indices]
