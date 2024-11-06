@@ -1,7 +1,8 @@
+import './index.css'
+
 import { useHealthStatus } from './hooks/useHealthStatus'
 import { useTheme } from './hooks/useTheme'
 import { useFileUpload } from './hooks/useFileUpload'
-import './index.css'
 import { SummaryForm } from './components/SummaryForm'
 import { SummaryResult } from './components/SummaryResult'
 import { ErrorToast } from './components/ErrorToast'

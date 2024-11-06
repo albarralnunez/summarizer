@@ -1,7 +1,10 @@
 import React, { useState, ChangeEvent, FormEvent } from 'react'
-import { Algorithm, ProcessorType } from '../types'
+import { Algorithm, ProcessorType, VectorizationType } from '../types'
 import { InfoIcon } from './InfoIcon'
 import { HealthState } from '../hooks/useHealthStatus';
+
+// Add language type
+type Language = 'english' | 'spanish';
 
 interface SummaryFormProps {
   onSubmit: (formData: FormData) => void;
@@ -17,6 +20,9 @@ export const SummaryForm: React.FC<SummaryFormProps> = ({ onSubmit, isLoading, o
   const [earlyTerminationFactor, setEarlyTerminationFactor] = useState<number>(2.0)
   const [algorithm, setAlgorithm] = useState<Algorithm>('default')
   const [processor, setProcessor] = useState<ProcessorType>('default')
+  const [enableProfiling, setEnableProfiling] = useState(false);
+  const [language, setLanguage] = useState<Language>('english');
+  const [computeStatistics, setComputeStatistics] = useState(true);
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>): void => {
     if (e.target.files) {
@@ -58,6 +64,9 @@ export const SummaryForm: React.FC<SummaryFormProps> = ({ onSubmit, isLoading, o
     formData.append('early_termination_factor', earlyTerminationFactor.toString())
     formData.append('algorithm', algorithm)
     formData.append('processor', processor)
+    formData.append('enable_profiling', enableProfiling.toString());
+    formData.append('language', language);
+    formData.append('compute_statistics', computeStatistics.toString());
 
     onSubmit(formData)
   }
@@ -95,30 +104,6 @@ export const SummaryForm: React.FC<SummaryFormProps> = ({ onSubmit, isLoading, o
           disabled={isFormDisabled}
         />
       </div>
-      <div className="form-group">
-        <div className="label-with-info">
-          <label htmlFor="earlyTerminationFactor">
-            Early Termination Factor: {earlyTerminationFactor.toFixed(1)}
-          </label>
-          <InfoIcon 
-            tooltip={
-              "Controls how much text to process before stopping. " +
-              "A higher value (e.g. 5.0) processes more text for potentially better summaries but takes longer. " +
-              "A lower value (e.g. 1.5) processes less text for faster results but potentially less accurate summaries."
-            }
-          />
-        </div>
-        <input
-          type="range"
-          id="earlyTerminationFactor"
-          min="1.0"
-          max="10.0"
-          step="0.1"
-          value={earlyTerminationFactor}
-          onChange={(e) => setEarlyTerminationFactor(parseFloat(e.target.value))}
-          disabled={isFormDisabled}
-        />
-      </div>
       <div className="processing-options">
         <div className="form-group select-group">
           <label htmlFor="algorithm">Summary Algorithm:</label>
@@ -129,7 +114,9 @@ export const SummaryForm: React.FC<SummaryFormProps> = ({ onSubmit, isLoading, o
               onChange={(e) => setAlgorithm(e.target.value as Algorithm)}
               disabled={isFormDisabled}
             >
-              <option value="default">Default</option>
+              <option value="default">Default (Parallel)</option>
+              <option value="simple">Default (Simple)</option>
+              <option value="sklearn">Default (Sklearn)</option>
               <option value="dask" disabled={!isDaskAvailable}>
                 Dask {!isDaskAvailable && '(unavailable)'}
               </option>
@@ -151,6 +138,71 @@ export const SummaryForm: React.FC<SummaryFormProps> = ({ onSubmit, isLoading, o
               </option>
             </select>
           </div>
+        </div>
+      </div>
+      <div className="checkbox-grid">
+        <div className="checkbox-item">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={computeStatistics}
+              onChange={(e) => setComputeStatistics(e.target.checked)}
+            />
+            Compute Text Statistics
+          </label>
+        </div>
+        <div className="checkbox-item">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={enableProfiling}
+              onChange={(e) => setEnableProfiling(e.target.checked)}
+            />
+            Enable Performance Profiling
+          </label>
+        </div>
+      </div>
+      {!computeStatistics && (
+        <div className="form-group slider-group">
+          <div className="slider-header">
+            <span className="slider-title">Early Termination Factor</span>
+            <span className="slider-value">{earlyTerminationFactor.toFixed(1)}</span>
+          </div>
+          <div className="slider-container">
+            <input
+              type="range"
+              id="earlyTerminationFactor"
+              value={earlyTerminationFactor}
+              onChange={(e) => setEarlyTerminationFactor(parseFloat(e.target.value))}
+              min={1.0}
+              max={10.0}
+              step={0.1}
+              disabled={isFormDisabled}
+              className="slider"
+            />
+            <div className="slider-labels">
+              <span>1.0</span>
+              <span>5.5</span>
+              <span>10.0</span>
+            </div>
+          </div>
+          <small className="form-text text-muted">
+            Controls how many sentences are processed. Higher values process more sentences but may be slower.
+          </small>
+        </div>
+      )}
+      <div className="form-group select-group">
+        <label htmlFor="language">Language:</label>
+        <div className="select-wrapper">
+          <select
+            id="language"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as Language)}
+            disabled={isFormDisabled}
+          >
+            <option value="english">English</option>
+            <option value="spanish">Spanish</option>
+          </select>
         </div>
       </div>
       <div className="button-group">

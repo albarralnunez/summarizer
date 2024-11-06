@@ -8,12 +8,14 @@ import tempfile
 import os
 from src.utils.text_processing import yield_sentences, split_into_sentences
 import logging
+from src.services.language import LanguageType
 
 logger = logging.getLogger(__name__)
 
-
 async def process_input(
-    file: Optional[UploadFile], text: Optional[str]
+    file: Optional[UploadFile], 
+    text: Optional[str],
+    language: LanguageType = "english"
 ) -> AsyncIterator[str]:
 
     if file is None and text is None:

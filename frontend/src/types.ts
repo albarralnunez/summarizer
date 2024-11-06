@@ -8,8 +8,9 @@ export type ApiResponse<T> = {
   error: string | null;
 }
 
-export type Algorithm = 'default' | 'dask';
+export type Algorithm = 'default' | 'dask' | 'simple' | 'sklearn';
 export type ProcessorType = 'default' | 'dask';
+export type VectorizationType = 'default' | 'simple';
 
 export interface SummaryResponse {
   summary: string[];

@@ -1,161 +1,414 @@
-from typing import AsyncIterator, List, Dict, Tuple
-import asyncio
-from concurrent.futures import ProcessPoolExecutor
-import multiprocessing
+from typing import AsyncIterator, List, Dict, Tuple, Union, NamedTuple, Literal, Optional
 import numpy as np
 from collections import Counter
 import logging
 from scipy.sparse import csr_matrix, vstack
-from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.feature_extraction.text import TfidfTransformer, CountVectorizer
 from src.utils.text_processing import word_tokenize, STOP_WORDS
-from src.services.constants import MIN_SENTENCE_LENGTH, MIN_WORDS_COUNT, MAX_SENTENCE_LENGTH
+from functools import lru_cache
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
+from src.api.models import TextStatistics
+from src.services.language import LanguageType
+from src.services.text_processor import TextProcessor
+from src.services.types import TokenizedSentence
 
 logger = logging.getLogger(__name__)
 
+class ProcessedData(NamedTuple):
+    word_to_index: Dict[str, int]
+    sentences: List[TokenizedSentence]
+    word_counts: Counter
+    total_words: int
+    language: LanguageType
 
-def process_sentence(sentence: Tuple[str, List[str]], word_to_index: dict):
-    words = sentence[1]
+async def process_text(
+    sentence_iterator: Union[AsyncIterator[str], List[str]],
+    language: LanguageType = "english",
+    compute_statistics: bool = True,
+    num_sentences: Optional[int] = None,
+    early_termination_factor: float = 2.0
+) -> ProcessedData:
+    """Process text and optionally compute statistics using parallel processing"""
+    # Handle both async iterator and list inputs
+    if isinstance(sentence_iterator, list):
+        sentences = sentence_iterator
+    else:
+        sentences = [s async for s in sentence_iterator]
     
-    word_freq = Counter(words)
+    processor = TextProcessor(language)
+    return await processor.process_text(
+        sentences, 
+        compute_statistics=compute_statistics,
+        num_sentences=num_sentences,
+        early_termination_factor=early_termination_factor
+    )
 
+def calculate_text_statistics(
+    processed_data: ProcessedData,
+    word_scores: Optional[Dict[str, float]] = None
+) -> TextStatistics:
+    """Calculate text statistics from processed data"""
+    if processed_data.language not in STOP_WORDS:
+        raise ValueError(f"Unsupported language: {processed_data.language}")
+        
+    if not processed_data.metrics:
+        raise ValueError("No metrics available - statistics computation was disabled")
+        
+    stop_words = STOP_WORDS[processed_data.language]
+    
+    # Use metrics from processed_data instead of direct word_counts
+    word_counts = processed_data.metrics.word_frequencies
+    sentence_count = len(processed_data.sentences)
+    unique_words = processed_data.metrics.unique_words
+    
+    # Get vocabulary size from word_to_index
+    vocabulary_size = len(processed_data.word_to_index)
+    
+    # Filter stop words for most common words using language-specific stop words
+    content_words = {
+        word: count for word, count in word_counts.items()
+        if word not in stop_words
+    }
+    most_common = sorted(
+        content_words.items(),
+        key=lambda x: (-x[1], x[0])
+    )[:10]
+
+    # Process top scoring words if available
+    top_scoring_words = []
+    if word_scores:
+        filtered_scores = {
+            word: score for word, score in word_scores.items()
+            if word not in stop_words
+        }
+        top_scoring_words = sorted(
+            filtered_scores.items(),
+            key=lambda x: (-x[1], x[0])
+        )[:10]
+
+    return TextStatistics(
+        word_count=processed_data.metrics.word_count,
+        sentence_count=sentence_count,
+        unique_words=unique_words,
+        vocabulary_size=vocabulary_size,
+        avg_sentence_length=(
+            processed_data.metrics.word_count / sentence_count 
+            if sentence_count > 0 else 0
+        ),
+        most_common_words=most_common,
+        top_scoring_words=top_scoring_words
+    )
+
+async def summarize_text(
+    sentence_iterator: Union[AsyncIterator[str], List[str]],
+    num_sentences: int,
+    early_termination_factor: float = 2.0,
+    algorithm: str = "default",
+    language: LanguageType = "english",
+    compute_statistics: bool = True
+) -> Tuple[List[str], Optional[TextStatistics]]:
+    """Summarize text and optionally compute statistics using parallel processing."""
+    if language not in STOP_WORDS:
+        raise ValueError(f"Unsupported language: {language}")
+
+    processed_data = await process_text(
+        sentence_iterator, 
+        language=language,
+        compute_statistics=compute_statistics,
+        num_sentences=num_sentences,
+        early_termination_factor=early_termination_factor
+    )
+    
+    if not processed_data.sentences:
+        raise ValueError("File is empty or contains no valid sentences")
+
+    # Dispatch to appropriate algorithm
+    if algorithm == "simple":
+        summary, word_scores = summarize_simple(
+            processed_data, 
+            num_sentences, 
+            compute_statistics,
+            early_termination_factor=early_termination_factor
+        )
+    elif algorithm == "sklearn":
+        summary, word_scores = summarize_sklearn(
+            processed_data, 
+            num_sentences, 
+            compute_statistics,
+            early_termination_factor=early_termination_factor
+        )
+    else:
+        summary, word_scores = await summarize_default(
+            processed_data, 
+            num_sentences, 
+            compute_statistics,
+            early_termination_factor=early_termination_factor
+        )
+
+    # Always create basic statistics with vocabulary size
+    statistics = TextStatistics(
+        word_count=0,
+        sentence_count=len(processed_data.sentences),
+        unique_words=0,
+        vocabulary_size=len(processed_data.word_to_index),
+        avg_sentence_length=0,
+        most_common_words=[],
+        top_scoring_words=[]
+    )
+
+    # Add detailed statistics if enabled
+    if compute_statistics and processed_data.metrics:
+        try:
+            statistics = calculate_text_statistics(processed_data, word_scores)
+        except ValueError as e:
+            logger.warning(f"Failed to calculate detailed statistics: {e}")
+    
+    return summary, statistics
+
+def summarize_simple(
+    processed_data: ProcessedData,
+    num_sentences: int,
+    compute_statistics: bool = True,
+    early_termination_factor: float = 2.0
+) -> Tuple[List[str], Optional[Dict[str, float]]]:
+    """Simple summarization using the same approach as the default algorithm."""
+    stop_words = list(STOP_WORDS[processed_data.language])
+    
+    # Create sentence vectors using the same preprocessing as default
+    sentence_vectors = []
+    for sentence in processed_data.sentences:
+        # Use pre-tokenized words directly from TokenizedSentence
+        filtered_words = [
+            word for word in sentence.tokens 
+            if (word in processed_data.word_to_index and 
+                word not in stop_words)
+        ]
+        
+        # Create sparse vector for sentence
+        word_freq = Counter(filtered_words)
+        row = []
+        col = []
+        data = []
+        
+        for word, freq in word_freq.items():
+            row.append(0)
+            col.append(processed_data.word_to_index[word])
+            data.append(freq)
+                
+        sentence_vectors.append(
+            csr_matrix(
+                (data, (row, col)), 
+                shape=(1, len(processed_data.word_to_index))
+            )
+        )
+    
+    # Calculate TF-IDF scores
+    word_count_matrix = vstack(sentence_vectors)
+    tfidf = TfidfTransformer(smooth_idf=True, use_idf=True)
+    tfidf_matrix = tfidf.fit_transform(word_count_matrix)
+    
+    # Calculate sentence scores and get top sentences
+    sentence_scores = np.asarray(tfidf_matrix.sum(axis=1)).ravel()
+    top_indices = np.argsort(sentence_scores)[-num_sentences:]
+    top_indices.sort()
+    
+    # Only compute word scores if statistics are needed
+    word_scores = None
+    if compute_statistics:
+        word_importance = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+        word_scores = {
+            word: float(word_importance[idx])
+            for word, idx in processed_data.word_to_index.items()
+            if (word not in stop_words and
+                len(word) > 2 and
+                word_importance[idx] > 0 and
+                word.isalnum())
+        }
+        
+        # Normalize word scores
+        if word_scores:
+            max_score = max(word_scores.values())
+            if max_score > 0:
+                word_scores = {
+                    word: score / max_score
+                    for word, score in word_scores.items()
+                }
+    
+    return [processed_data.sentences[i].original for i in top_indices], word_scores
+
+def summarize_sklearn(
+    processed_data: ProcessedData,
+    num_sentences: int,
+    compute_statistics: bool = True,
+    early_termination_factor: float = 2.0
+) -> Tuple[List[str], Optional[Dict[str, float]]]:
+    """Summarize using sklearn's TF-IDF implementation."""
+    stop_words = list(STOP_WORDS[processed_data.language])
+    token_pattern = r'\b[a-zA-Z]{3,}\b'
+    
+    # Start with less restrictive min_df
+    min_df = 1
+    
+    # Just join the pre-tokenized words - they're already filtered in TextProcessor
+    processed_sentences = [
+        ' '.join(sentence.tokens) for sentence in processed_data.sentences
+    ]
+    
+    vectorizer = CountVectorizer(
+        lowercase=True,
+        stop_words=stop_words,
+        token_pattern=token_pattern,
+        min_df=min_df
+    )
+    
+    word_count_matrix = vectorizer.fit_transform(processed_sentences)
+    
+    tfidf = TfidfTransformer(smooth_idf=True, use_idf=True)
+    tfidf_matrix = tfidf.fit_transform(word_count_matrix)
+    
+    sentence_scores = np.asarray(tfidf_matrix.sum(axis=1)).ravel()
+    top_indices = np.argsort(sentence_scores)[-num_sentences:]
+    top_indices.sort()
+    
+    # Only compute word scores if statistics are needed
+    word_scores = None
+    if compute_statistics:
+        word_importance = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+        feature_names = vectorizer.get_feature_names_out()
+        
+        word_scores = {
+            word: float(score)
+            for word, score in zip(feature_names, word_importance)
+            if (word not in STOP_WORDS[processed_data.language] and
+                len(word) > 2 and
+                score > 0 and
+                word.isalnum())
+        }
+        
+        # Normalize word scores
+        if word_scores:
+            max_score = max(word_scores.values())
+            if max_score > 0:
+                word_scores = {
+                    word: score / max_score
+                    for word, score in word_scores.items()
+                }
+    
+    return [processed_data.sentences[i].original for i in top_indices], word_scores
+    
+
+async def summarize_default(
+    processed_data: ProcessedData,
+    num_sentences: int,
+    compute_statistics: bool = True,
+    early_termination_factor: float = 2.0
+) -> Tuple[List[str], Optional[Dict[str, float]]]:
+    """Default summarization using custom vectorization."""
+    stop_words = list(STOP_WORDS[processed_data.language])
+    
+    # Use pre-tokenized data from processed_data
+    sentence_vectors = await vectorize_sentences(
+        word_to_index=processed_data.word_to_index,
+        sentences=processed_data.sentences,  # Pass TokenizedSentence objects directly
+        language=processed_data.language
+    )
+    
+    word_count_matrix = vstack(sentence_vectors)
+    tfidf = TfidfTransformer(smooth_idf=True, use_idf=True)
+    tfidf_matrix = tfidf.fit_transform(word_count_matrix)
+    
+    sentence_scores = np.asarray(tfidf_matrix.sum(axis=1)).ravel()
+    top_indices = np.argsort(sentence_scores)[-num_sentences:]
+    top_indices.sort()
+    
+    # Only compute word scores if statistics are needed
+    word_scores = None
+    if compute_statistics:
+        word_importance = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+        
+        word_scores = {
+            word: float(word_importance[idx])
+            for word, idx in processed_data.word_to_index.items()
+            if (word not in STOP_WORDS[processed_data.language] and
+                len(word) > 2 and
+                word_importance[idx] > 0 and
+                word.isalnum())
+        }
+        
+        # Normalize word scores
+        if word_scores:
+            max_score = max(word_scores.values())
+            if max_score > 0:
+                word_scores = {
+                    word: score / max_score
+                    for word, score in word_scores.items()
+                }
+    
+    return [processed_data.sentences[i].original for i in top_indices], word_scores
+
+def calculate_tfidf_scores(word_count_matrix: csr_matrix) -> np.ndarray:
+    """Calculate TF-IDF scores for a word count matrix"""
+    tfidf_transformer = TfidfTransformer(smooth_idf=True, use_idf=True)
+    tfidf_matrix = tfidf_transformer.fit_transform(word_count_matrix)
+    return np.asarray(tfidf_matrix.sum(axis=1)).ravel()
+
+def vectorize_sentences_simple(sentences: List[str]) -> List[csr_matrix]:
+    """Convert sentences into sparse vectors using simple sequential processing"""
+    return [process_sentence(sentence) for sentence in sentences]
+
+def process_sentence(sentence: TokenizedSentence, word_to_index: Dict[str, int], language: LanguageType) -> csr_matrix:
+    """Process a single sentence into a sparse vector"""
+    stop_words = STOP_WORDS[language]
+    
+    # Use pre-tokenized words directly from TokenizedSentence
+    word_freq = Counter(
+        word for word in sentence.tokens 
+        if word in word_to_index and word not in stop_words
+    )
+    
     row = []
     col = []
     data = []
-
+    
     for word, freq in word_freq.items():
-        if word in word_to_index:
-            row.append(0)
-            col.append(word_to_index[word])
-            data.append(freq)
+        row.append(0)
+        col.append(word_to_index[word])
+        data.append(freq)
+            
+    return csr_matrix((data, (row, col)), shape=(1, len(word_to_index)))
 
-    sparse_vector = csr_matrix((data, (row, col)), shape=(1, len(word_to_index)))
-    return sentence[0], sparse_vector
-
-
-
-async def process_sentences_batch(
-    batch: List[str], word_to_index: Dict[str, int]
-) -> List[Tuple[str, csr_matrix]]:
-    loop = asyncio.get_running_loop()
-    with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
-        futures = [
-            loop.run_in_executor(executor, process_sentence, sentence, word_to_index)
-            for sentence in batch
-        ]
-        return await asyncio.gather(*futures)
-
-def calculate_tfidf_scores(word_count_matrix) -> np.ndarray:
-    """
-    Calculate TF-IDF scores for a word count matrix.
+def process_chunk_vectorize(chunk_data: Tuple[List[str], Dict[str, int], LanguageType]) -> List[csr_matrix]:
+    """Process a chunk of sentences into sparse vectors
     
     Args:
-        word_count_matrix: Sparse matrix where each row represents a sentence and each column represents a word
+        chunk_data: Tuple containing (sentences, word_to_index)
         
     Returns:
-        numpy.ndarray: Array of sentence scores based on TF-IDF
+        List of sparse matrices representing the vectorized sentences
     """
-    # Initialize a TF-IDF transformer to convert the word count matrix into a TF-IDF matrix
-    tfidf_transformer = TfidfTransformer(smooth_idf=True, use_idf=True)
-    
-    # Fit the transformer to the word count matrix and transform it into a TF-IDF matrix
-    tfidf_matrix = tfidf_transformer.fit_transform(word_count_matrix)
-    
-    # Calculate sentence scores
-    # 1. Sum TF-IDF scores for each sentence
-    sentence_sums = tfidf_matrix.sum(axis=1)  # Returns sparse matrix of shape (n_sentences, 1)
-    
-    # 2. Convert to dense array and flatten
-    return np.asarray(sentence_sums).ravel()  # Returns 1D array of shape (n_sentences,)
-
-
-
-async def build_vocabulary(
-    sentence_iterator: AsyncIterator[str],
-    num_sentences: int,
-    early_termination_factor: float
-) -> Tuple[Dict[str, int], List[Tuple[str, List[str]]]]:
-    """
-    Build vocabulary from sentences and return word-to-index mapping and processed sentences.
-    
-    Args:
-        sentence_iterator: Iterator yielding sentences
-        num_sentences: Number of sentences to extract
-        early_termination_factor: Factor for early termination
-        
-    Returns:
-        Tuple containing:
-        - word_to_index: Dictionary mapping words to indices
-        - sentences: List of (sentence, filtered_words) tuples
-    """
-    word_to_index = {}
-    sentences = []
-
-    async for sentence in sentence_iterator:
-        words = word_tokenize(sentence.lower())
-        filtered_words = [
-            word for word in words if word not in STOP_WORDS and word.isalnum()
-        ]
-
-        for word in filtered_words:
-            if word not in word_to_index:
-                word_to_index[word] = len(word_to_index)
-        sentences.append((sentence, filtered_words))
-
-        # Apply early termination checks
-        if len(sentences) >= max(num_sentences * 10, 200) * early_termination_factor:
-            break
-
-    return word_to_index, sentences
+    sentences, word_to_index, language = chunk_data
+    return [process_sentence(sent, word_to_index, language) for sent in sentences]
 
 async def vectorize_sentences(
     word_to_index: Dict[str, int],
-    sentences: List[Tuple[str, List[str]]],
-    num_sentences: int
+    sentences: List[str],
+    language: LanguageType
 ) -> List[csr_matrix]:
-    """
-    Convert processed sentences into sparse vectors using the vocabulary.
+    """Convert sentences into sparse vectors using parallel processing"""
+    chunk_size = max(1000, len(sentences) // (multiprocessing.cpu_count() * 2))
+    chunks = [sentences[i:i + chunk_size] for i in range(0, len(sentences), chunk_size)]
     
-    Args:
-        word_to_index: Dictionary mapping words to indices
-        sentences: List of (sentence, filtered_words) tuples
-        num_sentences: Number of sentences to extract
+    # Create chunks with word_to_index dictionary
+    chunk_data = [(chunk, word_to_index, language) for chunk in chunks]
+    
+    # Process chunks in parallel
+    with ProcessPoolExecutor() as executor:
+        chunk_results = list(executor.map(process_chunk_vectorize, chunk_data))
         
-    Returns:
-        List of sparse vectors representing sentences
-    """
-    sentence_vectors = []
-    batch_size = max(100, 2 * num_sentences)
+    # Flatten results
+    results = []
+    for chunk_result in chunk_results:
+        results.extend(chunk_result)
     
-    for i in range(0, len(sentences), batch_size):
-        batch = sentences[i : min(i + batch_size, len(sentences))]
-        results = await process_sentences_batch(batch, word_to_index)
-        sentence_vectors.extend([vector for _, vector in results])
-
-    return sentence_vectors
-
-async def summarize_text(
-    sentence_iterator: AsyncIterator[str],
-    num_sentences: int,
-    early_termination_factor: float,
-) -> List[str]:
-    # Build vocabulary and process sentences
-    word_to_index, sentences = await build_vocabulary(
-        sentence_iterator, num_sentences, early_termination_factor
-    )
-
-    if not sentences:
-        raise ValueError("File is empty or contains no valid sentences")
-
-    # Vectorize sentences
-    sentence_vectors = await vectorize_sentences(word_to_index, sentences, num_sentences)
-    
-    # Create word count matrix and calculate TF-IDF scores
-    word_count_matrix = vstack(sentence_vectors)
-    sentence_scores = calculate_tfidf_scores(word_count_matrix)
-    
-    # Get the indices of sentences sorted by their scores
-    sorted_indices = np.argsort(sentence_scores)
-    top_indices = sorted_indices[-num_sentences:]
-    top_indices.sort()
-
-    return [sentences[i][0] for i in top_indices]
+    return results
