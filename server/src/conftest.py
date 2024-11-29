@@ -155,9 +155,7 @@ def mock_process_with_dask(monkeypatch):
         for sentence in sentences:
             yield sentence
 
-    monkeypatch.setattr(
-        "src.services.dask_processor.process_with_dask", mock_process
-    )
+    monkeypatch.setattr("src.services.dask_processor.process_with_dask", mock_process)
 
 
 @pytest.fixture

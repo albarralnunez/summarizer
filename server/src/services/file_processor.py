@@ -12,10 +12,9 @@ from src.services.language import LanguageType
 
 logger = logging.getLogger(__name__)
 
+
 async def process_input(
-    file: Optional[UploadFile], 
-    text: Optional[str],
-    language: LanguageType = "english"
+    file: Optional[UploadFile], text: Optional[str], language: LanguageType = "english"
 ) -> AsyncIterator[str]:
 
     if file is None and text is None:
@@ -43,10 +42,10 @@ async def process_input(
                 chunk = await file.read(chunk_size)
                 if not chunk:
                     break
-                
+
                 current_text = buffer + chunk.decode("utf-8")
                 sentences = split_into_sentences(current_text)
-                
+
                 # If we have more chunks coming, keep the last sentence in buffer
                 if chunk:
                     if sentences:

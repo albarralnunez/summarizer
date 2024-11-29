@@ -52,7 +52,10 @@ class SummaryOutput(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "summary": ["This is the first important sentence.", "This is another key point."],
+                "summary": [
+                    "This is the first important sentence.",
+                    "This is another key point.",
+                ],
                 "method": "custom",
                 "backend_processing_time": 0.5,
             }
