@@ -112,8 +112,35 @@ async def summarize_text(
     if language not in STOP_WORDS:
         raise ValueError(f"Unsupported language: {language}")
 
+    # For sklearn, skip all processing and use raw sentences
+    if algorithm == "sklearn":
+        # Convert iterator to list if needed
+        if not isinstance(sentence_iterator, list):
+            sentences = [s async for s in sentence_iterator]
+        else:
+            sentences = sentence_iterator
+            
+        summary = summarize_sklearn(
+            sentences,
+            num_sentences,
+            language
+        )
+        
+        # Return minimal statistics
+        statistics = TextStatistics(
+            word_count=0,
+            sentence_count=len(sentences),
+            unique_words=0,
+            vocabulary_size=0,
+            avg_sentence_length=0,
+            most_common_words=[],
+            top_scoring_words=[]
+        )
+        return summary, statistics
+
+    # For other algorithms, proceed with full processing
     processed_data = await process_text(
-        sentence_iterator, 
+        sentence_iterator,
         language=language,
         compute_statistics=compute_statistics,
         num_sentences=num_sentences,
@@ -238,32 +265,22 @@ def summarize_simple(
     return [processed_data.sentences[i].original for i in top_indices], word_scores
 
 def summarize_sklearn(
-    processed_data: ProcessedData,
+    sentences: List[str],
     num_sentences: int,
-    compute_statistics: bool = True,
-    early_termination_factor: float = 2.0
-) -> Tuple[List[str], Optional[Dict[str, float]]]:
-    """Summarize using sklearn's TF-IDF implementation."""
-    stop_words = list(STOP_WORDS[processed_data.language])
+    language: LanguageType
+) -> List[str]:
+    """Summarize using sklearn's TF-IDF implementation. Works directly with raw sentences."""
+    stop_words = list(STOP_WORDS[language])
     token_pattern = r'\b[a-zA-Z]{3,}\b'
-    
-    # Start with less restrictive min_df
-    min_df = 1
-    
-    # Just join the pre-tokenized words - they're already filtered in TextProcessor
-    processed_sentences = [
-        ' '.join(sentence.tokens) for sentence in processed_data.sentences
-    ]
     
     vectorizer = CountVectorizer(
         lowercase=True,
         stop_words=stop_words,
         token_pattern=token_pattern,
-        min_df=min_df
     )
     
-    word_count_matrix = vectorizer.fit_transform(processed_sentences)
-    
+    # Process raw sentences directly
+    word_count_matrix = vectorizer.fit_transform(sentences)
     tfidf = TfidfTransformer(smooth_idf=True, use_idf=True)
     tfidf_matrix = tfidf.fit_transform(word_count_matrix)
     
@@ -271,32 +288,7 @@ def summarize_sklearn(
     top_indices = np.argsort(sentence_scores)[-num_sentences:]
     top_indices.sort()
     
-    # Only compute word scores if statistics are needed
-    word_scores = None
-    if compute_statistics:
-        word_importance = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
-        feature_names = vectorizer.get_feature_names_out()
-        
-        word_scores = {
-            word: float(score)
-            for word, score in zip(feature_names, word_importance)
-            if (word not in STOP_WORDS[processed_data.language] and
-                len(word) > 2 and
-                score > 0 and
-                word.isalnum())
-        }
-        
-        # Normalize word scores
-        if word_scores:
-            max_score = max(word_scores.values())
-            if max_score > 0:
-                word_scores = {
-                    word: score / max_score
-                    for word, score in word_scores.items()
-                }
-    
-    return [processed_data.sentences[i].original for i in top_indices], word_scores
-    
+    return [sentences[i] for i in top_indices]
 
 async def summarize_default(
     processed_data: ProcessedData,
@@ -331,7 +323,7 @@ async def summarize_default(
             word: float(word_importance[idx])
             for word, idx in processed_data.word_to_index.items()
             if (word not in STOP_WORDS[processed_data.language] and
-                len(word) > 2 and
+                len(word) > 5 and
                 word_importance[idx] > 0 and
                 word.isalnum())
         }
